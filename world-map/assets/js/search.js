@@ -74,6 +74,7 @@ window.WORLD_SEARCH = (function () {
       });
     }
 
+    if (window.SE7EN) filtered = window.SE7EN.filterEntities(filtered);
     window.ENTITY_PANEL.renderList(filtered);
   }
 

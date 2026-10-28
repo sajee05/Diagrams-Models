@@ -20,6 +20,7 @@ window.WORLD_QUIZ = (function () {
   let missedItems = [];
   let keyboardHandlerAttached = false;
   let userOverriddenFilters = false;
+  let evidenceMode = false;
 
   const allCategoryKeys = [
     'national_park', 'tiger_reserve', 'biosphere_reserve', 'ramsar_site',
@@ -255,6 +256,7 @@ window.WORLD_QUIZ = (function () {
 
   function startQuiz(retryDeck = null) {
     if (!window.DATA_INTEGRITY) return;
+    evidenceMode = document.getElementById('quizStyle')?.value === 'evidence';
 
     if (!userOverriddenFilters) {
       syncWithActiveKinds(false);
@@ -267,6 +269,8 @@ window.WORLD_QUIZ = (function () {
       const continentVal = continentSelect ? continentSelect.value.trim() : '';
 
       let pool = window.DATA_INTEGRITY.getAll();
+      if (window.SE7EN) pool = window.SE7EN.filterEntities(pool);
+      if (evidenceMode) pool = pool.filter(e => window.SE7EN?.hasVerifiedQuestions(e));
 
       // Region Filter
       if (continentVal === 'India') {
@@ -291,7 +295,7 @@ window.WORLD_QUIZ = (function () {
           cardEl.innerHTML = `
             <div class="empty-state">
               <div class="empty-title">No Features Found</div>
-              <p class="empty-desc">No features match the selected types in "${continentVal || 'All Continents'}". Please check at least one type in the filters above.</p>
+              <p class="empty-desc">${evidenceMode ? 'No source-linked questions are ready for these filters yet. Unreviewed facts are excluded from this question bank.' : 'No features match these filters. Select another region or type.'}</p>
             </div>
           `;
         }
@@ -371,7 +375,8 @@ window.WORLD_QUIZ = (function () {
 
     answered = false;
     const targetEntity = currentDeck[currentIndex];
-    activeQuestion = generateQuestion(targetEntity);
+    activeQuestion = evidenceMode ? window.SE7EN.getVerifiedQuestion(targetEntity) : generateQuestion(targetEntity);
+    if (!activeQuestion) { currentIndex++; renderQuestion(); return; }
 
     // Update Header
     if (scoreEl) {
@@ -383,13 +388,14 @@ window.WORLD_QUIZ = (function () {
 
     // Pin location on 2D Vector Map
     if (window.WORLD_VECTOR_MAP && window.WORLD_VECTOR_MAP.setQuizTarget) {
-      window.WORLD_VECTOR_MAP.setQuizTarget(targetEntity);
+      if (evidenceMode) window.WORLD_VECTOR_MAP.clearQuizTarget();
+      else window.WORLD_VECTOR_MAP.setQuizTarget(targetEntity);
     } else if (window.WORLD_FLAT_MAP && window.WORLD_FLAT_MAP.setQuizTarget) {
       window.WORLD_FLAT_MAP.setQuizTarget(targetEntity.id);
     }
 
     const catName = categoryNames[targetEntity.category] || (targetEntity.categoryName || targetEntity.category).toUpperCase();
-    const subLocation = targetEntity.region || targetEntity.state || targetEntity.continent || '';
+    const subLocation = evidenceMode ? '' : targetEntity.region || targetEntity.state || targetEntity.continent || '';
 
     // Render Question Card
     cardEl.innerHTML = `
@@ -408,8 +414,8 @@ window.WORLD_QUIZ = (function () {
 
         <!-- Prompt Heading -->
         <div class="quiz-prompt-header">
-          <span class="quiz-step-tag">Observe Pinned Location on Map</span>
-          <h2 class="quiz-question-title">${getQuestionPrompt(targetEntity)}</h2>
+          <span class="quiz-step-tag">${escapeHtml(evidenceMode ? activeQuestion.format : 'Observe Pinned Location on Map')}</span>
+          <h2 class="quiz-question-title">${escapeHtml(evidenceMode ? activeQuestion.prompt : getQuestionPrompt(targetEntity))}</h2>
         </div>
 
         <!-- 4 Options -->
@@ -488,6 +494,7 @@ window.WORLD_QUIZ = (function () {
             <span class="correct-name">${escapeHtml(activeQuestion.target.name)}</span>
           </div>
           <p class="feedback-text">${escapeHtml(activeQuestion.explanation)}</p>
+          ${(activeQuestion.sources || []).filter(url => /^https?:\/\//.test(url)).map((url,i)=>`<a href="${escapeHtml(url)}" target="_blank" rel="noopener">Reference ${i+1} ↗</a>`).join(' · ')}
           <button type="button" class="primary-btn feedback-next-btn" id="btnNextQuiz">
             ${isLast ? 'Complete Round →' : 'Next Question →'}
           </button>
@@ -576,7 +583,7 @@ window.WORLD_QUIZ = (function () {
       explanation += ` · Effect: ${targetEntity.effect}`;
     }
     if (targetEntity.upscNotes) {
-      explanation += ` · High-Yield Insight: ${targetEntity.upscNotes}`;
+      explanation += ` · ${targetEntity.upscNotes}`;
     }
 
     return {
@@ -592,6 +599,7 @@ window.WORLD_QUIZ = (function () {
     keyboardHandlerAttached = true;
 
     window.addEventListener('keydown', (e) => {
+      if (e.target.closest('input,select,textarea,[contenteditable="true"]')) return;
       const quizPanel = document.getElementById('quizPanel');
       if (!quizPanel || quizPanel.classList.contains('hidden')) return;
 
@@ -633,7 +641,7 @@ window.WORLD_QUIZ = (function () {
 
   function escapeHtml(str) {
     if (!str) return '';
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   return {

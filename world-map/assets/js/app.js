@@ -44,6 +44,8 @@ window.WORLD_APP = (function () {
       window.WORLD_FLAT_MAP.init();
     }
 
+    if (window.SE7EN) window.SE7EN.init();
+
     // 4. Search & Filtering
     if (window.WORLD_SEARCH) window.WORLD_SEARCH.init();
 

@@ -51,7 +51,9 @@ window.DATA_INTEGRITY = (function () {
       entity.context || '',
       ...(Array.isArray(entity.keyFacts) ? entity.keyFacts : []),
       entity.upscNotes || '',
-      entity.description || ''
+      entity.description || '',
+      ...(entity.studySections||[]).flatMap(s=>(s.facts||[]).map(f=>typeof f==='string'?f:f.text)),
+      ...(entity.speciesNotes||[]).map(s=>[s.name,s.scientificName,s.category,s.notes].join(' '))
     ].join(' ').toLowerCase();
 
     index.searchIndex.push({

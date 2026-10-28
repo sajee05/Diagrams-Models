@@ -44,6 +44,14 @@ window.WORLD_VECTOR_MAP = (function () {
   let rafId = 0;
   const dirty = { bg: true, mid: true, fl: true };
   let flowTime = 0;
+  let animationTime = 0, animationLast = null;
+  let animationPlaying = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let animationSpeed = 1;
+  let terrainMode = 'cartographic';
+  let terrainImage = null;
+  let landClip = null;
+  let entityScope = null;
+  function inScope(item) { return !entityScope || entityScope.has(item.id) || entityScope.has(normKey(item.name)); }
   let animFly = null;
 
   // Gesture Tracking
@@ -230,14 +238,13 @@ window.WORLD_VECTOR_MAP = (function () {
 
     // Pre-compile datasets into Path2D
     compileDatasets();
-
     // Attach listeners
     attachPointerListeners();
     attachResizeListener();
 
     // Size canvas and set initial view centered on India
     resize();
-    centerOnRegion(78.5, 22.0, 1.45);
+    centerOnRegion(0, 8, Math.max(MIN_SCALE, Math.min(W / WORLD_W * .92, H / WORLD_W * .95)));
 
     isReady = true;
     requestRender(true, true);
@@ -292,6 +299,9 @@ window.WORLD_VECTOR_MAP = (function () {
         return item;
       });
     }
+
+    landClip = new Path2D();
+    compiledCountries.forEach(ct => landClip.addPath(ct.path));
 
     // 2. India States (from window.INDIA_STATES_GEOJSON)
     if (window.INDIA_STATES_GEOJSON && Array.isArray(window.INDIA_STATES_GEOJSON.features)) {
@@ -413,6 +423,7 @@ window.WORLD_VECTOR_MAP = (function () {
             name: r.name,
             altName: r.altName || '',
             category: 'river',
+            flowVerified: r.flowVerified === true,
             context: r.context || '',
             color: r.color || '#0284c7',
             path: path,
@@ -543,7 +554,8 @@ window.WORLD_VECTOR_MAP = (function () {
           }
           // Organic natural sanctuary zone (approx 0.24 degree radius)
           const zoneRadius = 0.0038 * BASE_SCALE;
-          const polyPath = generateOrganicZone(cx, cy, zoneRadius, idx + 1);
+          // A location anchor must never masquerade as a notified protected-area boundary.
+          const polyPath = null;
 
           const item = {
             id: p.id || normKey(p.name),
@@ -668,6 +680,7 @@ window.WORLD_VECTOR_MAP = (function () {
           flow: c.flow || '',
           path: path,
           segments: segs,
+          flowRoutes: segs.map(seg => {const pts=seg.map(([lat,lon])=>project(lon,lat));let total=0;const legs=[];for(let i=1;i<pts.length;i++){const a=pts[i-1],b=pts[i],length=Math.hypot(b[0]-a[0],b[1]-a[1]);if(length>0){legs.push({a,b,start:total,length});total+=length}}return {legs,total}}),
           cx: cx,
           cy: cy
         };
@@ -971,7 +984,7 @@ window.WORLD_VECTOR_MAP = (function () {
   }
 
   function resetView() {
-    centerOnRegion(78.5, 22.0, 1.45);
+    centerOnRegion(0, 8, Math.max(MIN_SCALE, Math.min(W / WORLD_W * .92, H / WORLD_W * .95)));
     selectedId = null;
     hideFloatingCard();
   }
@@ -982,6 +995,7 @@ window.WORLD_VECTOR_MAP = (function () {
     let minD = radius;
 
     const checkPoint = (item) => {
+      if (!inScope(item)) return;
       if (!isCategoryActive(item.category)) return;
       const [px, py] = toScr(item.cx, item.cy);
       const d = Math.hypot(px - sx, py - sy);
@@ -1026,6 +1040,7 @@ window.WORLD_VECTOR_MAP = (function () {
     if (isCategoryActive('current')) {
       const [wx, wy] = toWld(sx, sy);
       for (const cur of compiledCurrents) {
+          if (!inScope(cur)) continue;
         if (cur.segments) {
           for (const seg of cur.segments) {
             for (let i = 1; i < seg.length; i++) {
@@ -1049,6 +1064,7 @@ window.WORLD_VECTOR_MAP = (function () {
     if (isCategoryActive('wind')) {
       const [wx, wy] = toWld(sx, sy);
       for (const wind of compiledWinds) {
+          if (!inScope(wind)) continue;
         if (wind.segments) {
           for (const seg of wind.segments) {
             for (let i = 1; i < seg.length; i++) {
@@ -1527,6 +1543,9 @@ window.WORLD_VECTOR_MAP = (function () {
 
   function renderFrame(time) {
     rafId = 0;
+    if (animationLast !== null && animationPlaying && !document.hidden) animationTime += Math.min(100, time - animationLast) * animationSpeed;
+    animationLast = time;
+    time = animationTime;
     flowTime = time;
 
     // 1. Draw Ocean Surface & Smoky Volumetric Currents (strictly under landmass)
@@ -1548,10 +1567,19 @@ window.WORLD_VECTOR_MAP = (function () {
     drawFlyAndFlowLayer(time);
 
     // Keep silky 60 FPS animation loop active for flowing currents, rivers, winds, or selections
-    if (isCategoryActive('river') || isCategoryActive('current') || isCategoryActive('wind') || selectedId) {
+    if (animationPlaying && !document.hidden && (isCategoryActive('river') || isCategoryActive('current') || isCategoryActive('wind') || selectedId)) {
       dirty.fl = true;
       rafId = requestAnimationFrame(renderFrame);
     }
+  }
+
+  // Keep the illustrated water surface upright when a current travels westward.
+  // Mirroring preserves the forward curl without turning the whole breaker upside down.
+  function waveOrientation(angle) {
+    const mirror = Math.cos(angle) < 0 ? -1 : 1;
+    let rotation = mirror < 0 ? angle + Math.PI : angle;
+    rotation = Math.atan2(Math.sin(rotation), Math.cos(rotation));
+    return { rotation, mirror };
   }
 
   // Sea Layer: Base ocean color + Smoky Semi-3D Transparent Currents (NOT on land)
@@ -1564,6 +1592,29 @@ window.WORLD_VECTOR_MAP = (function () {
     // Ocean Fill
     c.fillStyle = col.sea;
     c.fillRect(0, 0, W, H);
+
+    if (terrainMode !== 'cartographic' && terrainImage) {
+      const yMax = -project(0, 85)[1];
+      c.save();
+      c.translate(W / 2 + V.tx, H / 2 + V.ty); c.scale(V.s, V.s);
+      c.globalAlpha = currentTheme === 'dark' ? .82 : 1;
+      c.drawImage(terrainImage, -WORLD_W/2, -yMax, WORLD_W, yMax*2);
+      c.restore();
+    }
+
+    // Quiet, broad water-surface lighting under the current ribbons.
+    if(isCategoryActive('current') && compiledCurrents.some(inScope)){
+      const wash=c.createLinearGradient(0,0,W,H);
+      wash.addColorStop(0,currentTheme==='dark'?'rgba(5,42,62,.28)':'rgba(75,153,181,.12)');
+      wash.addColorStop(.48,'rgba(208,244,249,.05)');
+      wash.addColorStop(1,'rgba(20,98,140,.12)');c.fillStyle=wash;c.fillRect(0,0,W,H);
+      c.lineWidth=.6;
+      for(let row=0;row<Math.ceil(H/24);row++){
+        const y=row*24;c.beginPath();
+        for(let x=0;x<=W+20;x+=20){const yy=y+Math.sin(x*.014+row*.8+time*.00035)*2.3+Math.sin(x*.027-row+time*.00022)*1.2;if(x===0)c.moveTo(x,yy);else c.lineTo(x,yy)}
+        c.strokeStyle='rgba(230,253,255,.09)';c.stroke();
+      }
+    }
 
     // Smoky, Semi-3D, Transparent Ocean Currents (Rendered across continuous world copies)
     if (isCategoryActive('current') && compiledCurrents.length > 0) {
@@ -1578,37 +1629,58 @@ window.WORLD_VECTOR_MAP = (function () {
         c.lineJoin = 'round';
 
         for (const cur of compiledCurrents) {
+          if (!inScope(cur)) continue;
           const isWarm = cur.type === 'warm';
           const isSel = cur.id === selectedId;
 
-          // Volumetric smoke palette with semi-transparent feathered falloff
-          const hazeCol = isWarm
-            ? (isDark ? 'rgba(248, 113, 113, 0.14)' : 'rgba(239, 68, 68, 0.12)')
-            : (isDark ? 'rgba(56, 189, 248, 0.14)' : 'rgba(2, 132, 199, 0.12)');
-          const midPlumeCol = isWarm
-            ? (isDark ? 'rgba(251, 146, 60, 0.28)' : 'rgba(249, 115, 22, 0.22)')
-            : (isDark ? 'rgba(56, 189, 248, 0.28)' : 'rgba(14, 165, 233, 0.22)');
-          // ONLY soft, semi-transparent oceanic flowing smoke shadows (NO middle dark line)
-          // 1. Wide outer feathered thermal shadow envelope
-          c.strokeStyle = hazeCol;
-          c.lineWidth = (isSel ? 36 : 28) / V.s;
-          c.stroke(cur.path);
-
-          // 2. Volumetric shadow plume with animated directional pulses
-          c.strokeStyle = midPlumeCol;
-          c.lineWidth = (isSel ? 22 : 16) / V.s;
-          c.setLineDash([52 / V.s, 28 / V.s, 76 / V.s, 32 / V.s]);
-          c.lineDashOffset = -(time * 0.007) / V.s;
-          c.stroke(cur.path);
-
-          // 3. Directional flow billow pulses (animated directional flow within shadow)
-          c.strokeStyle = hazeCol;
-          c.lineWidth = (isSel ? 16 : 10) / V.s;
-          c.setLineDash([24 / V.s, 38 / V.s]);
-          c.lineDashOffset = -(time * 0.012) / V.s;
-          c.stroke(cur.path);
-
+          // Stylised breaking-wave fronts travel downstream; these illustrate current direction.
+          // Their apparent height/speed is not a measured ocean state or tsunami forecast.
+          const rgb=isWarm?'225,100,64':cur.type==='cold'?'5,132,187':'70,137,160';
+          const deep=isWarm?'151,58,41':'5,72,121';
+          const width=isSel?20:15;
           c.setLineDash([]);
+          for(let halo=2;halo>=1;halo--){c.strokeStyle=`rgba(${rgb},.018)`;c.lineWidth=(width+halo*2)/V.s;c.stroke(cur.path)}
+          c.strokeStyle=`rgba(${rgb},.12)`;c.lineWidth=3/V.s;c.stroke(cur.path);
+          for(const route of cur.flowRoutes||[]){
+            if(!route.total)continue;
+            const pointAt=d=>{d=Math.max(0,Math.min(route.total,d));const leg=route.legs.find(l=>d<=l.start+l.length)||route.legs.at(-1);const t=Math.max(0,Math.min(1,(d-leg.start)/leg.length));return{x:leg.a[0]+(leg.b[0]-leg.a[0])*t,y:leg.a[1]+(leg.b[1]-leg.a[1])*t}};
+            const sample=d=>{const p=pointAt(d),before=pointAt(d-4/V.s),after=pointAt(d+4/V.s);return {...p,angle:Math.atan2(after.y-before.y,after.x-before.x)}};
+            const screenLength=route.total*V.s;
+            const fronts=Math.min(65,Math.max(2,Math.ceil(screenLength/72)));
+            for(let i=0;i<fronts;i++){
+              const head=((i/fronts*route.total+time*.034/V.s)%route.total+route.total)%route.total;
+              const p=sample(head),edge=Math.min(1,head*V.s/16,(route.total-head)*V.s/16);
+              const size=isSel?1.1:.9;
+              const phase=((time/3900+i*.37)%1+1)%1;
+              // A complete wave cycle: low swell -> rising face -> curling barrel -> breaking wash.
+              const swell=[[-22,6],[-13,5,-8,1,-5,-1],[-1,-5,5,-5,9,-2],[12,0,14,3,15,4],[12,3,10,2,7,2],[3,1,3,2,7,3],[10,4,15,5,18,6],[3,9,-8,7,-22,6]];
+              const curl=[[-22,6],[-13,5,-8,1,-6,-5],[-4,-13,3,-16,9,-12],[14,-9,14,-3,9,-1],[12,-5,9,-9,6,-8],[1,-7,2,-1,7,2],[10,4,15,5,18,6],[3,9,-8,7,-22,6]];
+              const crash=[[-22,6],[-12,6,-7,4,-2,1],[3,-1,12,-1,15,1],[19,2,19,5,15,5],[14,3,11,2,8,3],[4,3,5,4,9,4],[13,5,19,5,23,6],[5,9,-8,7,-22,6]];
+              const smooth=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t)};
+              let from,to,blend;
+              if(phase<.42){from=swell;to=curl;blend=smooth(phase/.42)}
+              else if(phase<.7){from=curl;to=crash;blend=smooth((phase-.42)/.28)}
+              else{from=crash;to=swell;blend=smooth((phase-.7)/.3)}
+              const shape=from.map((row,j)=>row.map((v,k)=>v+(to[j][k]-v)*blend));
+              const curlAmount=phase<.42?smooth(phase/.42):1-smooth((phase-.42)/.3);
+              c.save();c.globalAlpha=Math.max(0,edge);c.translate(p.x,p.y);const orientation=waveOrientation(p.angle);c.rotate(orientation.rotation);c.scale(orientation.mirror*size/V.s,size/V.s);
+              const body=c.createLinearGradient(0,-15,0,8);
+              body.addColorStop(0,isWarm?'#ffd0b9':'#bceff6');body.addColorStop(.48,isWarm?'#ec9a77':'#45b1da');body.addColorStop(1,isWarm?'#d7765c':'#2293c5');
+              c.beginPath();c.moveTo(...shape[0]);shape.slice(1).forEach(row=>c.bezierCurveTo(...row));c.closePath();c.fillStyle=body;c.fill();
+              // Dark blue/coral underside appears as the barrel opens and disappears in the wash.
+              c.save();c.globalAlpha*=curlAmount;
+              c.beginPath();c.moveTo(-11,5);c.bezierCurveTo(-3,2,-6,-7,3,-11);c.bezierCurveTo(8,-12,12,-7,9,-2);c.bezierCurveTo(9,-7,5,-9,2,-5);c.bezierCurveTo(1,-1,4,3,10,5);c.closePath();c.fillStyle=isWarm?'#a84c42':'#153e78';c.fill();
+              c.strokeStyle=isWarm?'rgba(255,213,190,.75)':'rgba(158,227,250,.8)';c.lineWidth=.55;
+              for(let k=0;k<4;k++){c.beginPath();c.moveTo(-9+k*3,4);c.bezierCurveTo(-1+k*2,0,-6+k*2,-7,1+k*2,-10);c.stroke()}
+              c.beginPath();c.moveTo(-6,-5);c.bezierCurveTo(-5,-9,-2,-13,3,-13.3);c.bezierCurveTo(8,-14,12,-10,12.1,-6.3);c.bezierCurveTo(12.5,-4,11.5,-2,9,-1);c.bezierCurveTo(10,-3,10.6,-4.3,9.8,-6);c.bezierCurveTo(9.2,-5.1,8.6,-5.8,8.8,-7);c.bezierCurveTo(7.8,-6.4,7.1,-7,7.4,-8.1);c.bezierCurveTo(5.8,-7.6,5.2,-8.5,5.5,-9.5);c.bezierCurveTo(3,-9,2,-11,1,-10.8);c.bezierCurveTo(-1,-9,-3,-9,-6,-5);c.closePath();c.fillStyle='#d7f7ff';c.fill();c.restore();
+              // Thin surface streaks stretch forward as the crest collapses.
+              const breaking=smooth((phase-.43)/.14)*(1-smooth((phase-.82)/.18));
+              for(let k=0;k<5;k++){const x=-10+k*5+breaking*4,y=5+Math.sin(k*2.2+phase*9)*.65;c.beginPath();c.moveTo(x-4,y);c.quadraticCurveTo(x,y-1.2-breaking*1.4,x+4,y-.3);c.strokeStyle=`rgba(233,254,255,${.28+breaking*.6})`;c.lineWidth=.7+breaking*.45;c.stroke()}
+              if(breaking>.1){c.save();c.globalAlpha*=breaking;c.beginPath();c.ellipse(12+breaking*3,2.5,6.5,2.2,-.12,0,Math.PI*2);c.fillStyle='rgba(216,249,255,.75)';c.fill();c.restore()}
+              c.restore();
+            }
+          }
+
         }
 
         c.restore();
@@ -1633,13 +1705,18 @@ window.WORLD_VECTOR_MAP = (function () {
       c.scale(V.s, V.s);
       c.globalAlpha = quizTargetId ? 0.88 : 1.0;
 
-      // 1. Continental Landmass (Borders visible whenever showBorders is ON, regardless of layers filter)
+      // Authentic relief, clipped to geographic land, above the animated ocean layer.
+      if (terrainMode !== 'cartographic' && terrainImage && landClip) {
+        const yMax = -project(0,85)[1]; c.save(); c.clip(landClip);
+        c.drawImage(terrainImage,-WORLD_W/2,-yMax,WORLD_W,yMax*2);
+        if (terrainMode === 'relief') { c.fillStyle=currentTheme==='dark'?'rgba(3,15,28,.15)':'rgba(255,249,230,.12)'; c.fill(landClip); }
+        c.restore();
+      }
       compiledCountries.forEach(ct => {
-        c.fillStyle = col.land;
-        c.fill(ct.path);
+        if (terrainMode === 'cartographic' || !terrainImage) { c.fillStyle = col.land; c.fill(ct.path); }
         if (showBorders) {
-          c.strokeStyle = col.borderCountry;
-          c.lineWidth = 0.75 / V.s;
+          c.strokeStyle = terrainMode === 'cartographic' ? col.borderCountry : 'rgba(255,255,255,.54)';
+          c.lineWidth = 0.65 / V.s;
           c.stroke(ct.path);
         }
       });
@@ -1647,8 +1724,8 @@ window.WORLD_VECTOR_MAP = (function () {
       // 2. India States (Borders visible whenever showBorders is ON)
       if (showBorders) {
         compiledStates.forEach(st => {
-          c.strokeStyle = col.borderState;
-          c.lineWidth = 0.65 / V.s;
+          c.strokeStyle = terrainMode === 'cartographic' ? col.borderState : 'rgba(255,255,255,.48)';
+          c.lineWidth = 0.5 / V.s;
           c.stroke(st.path);
         });
       }
@@ -1656,6 +1733,8 @@ window.WORLD_VECTOR_MAP = (function () {
       // 3. Mountain Ranges: Contoured Topographic Shading & Ridge Spines
       if (isCategoryActive('mountain')) {
         compiledMountains.forEach(m => {
+        if (!inScope(m)) return;
+          if (!inScope(m) || (terrainMode !== 'cartographic' && m.id !== selectedId)) return;
           if (m.polyPath) {
             // Topographic elevation fill
             c.fillStyle = col.mountainFill;
@@ -1690,6 +1769,7 @@ window.WORLD_VECTOR_MAP = (function () {
       // 4. National Parks & Protected Areas: Organic Soft Green Shading
       if (isCategoryActive('national_park') || isCategoryActive('tiger_reserve') || isCategoryActive('biosphere_reserve') || isCategoryActive('ramsar_site')) {
         compiledProtectedAreas.forEach(p => {
+        if (!inScope(p)) return;
           if (!p.polyPath || !isCategoryActive(p.category)) return;
           const isNP = p.category === 'national_park';
           const isTR = p.category === 'tiger_reserve';
@@ -1933,6 +2013,7 @@ window.WORLD_VECTOR_MAP = (function () {
       c.lineCap = 'round';
       c.lineJoin = 'round';
       compiledRivers.forEach(r => {
+        if (!inScope(r)) return;
         const isSel = r.id === selectedId;
         const riverCol = quizTargetId && isSel ? '#f59e0b' : (isSel ? (currentTheme === 'dark' ? '#38bdf8' : '#0284c7') : col.river);
         c.strokeStyle = riverCol;
@@ -1972,6 +2053,7 @@ window.WORLD_VECTOR_MAP = (function () {
     // 2b. Local Winds: Labels
     if (isCategoryActive('wind') && showLabels) {
       compiledWinds.forEach(w => {
+        if (!inScope(w)) return;
         if (V.s > 0.85 || w.id === selectedId) {
           const isCold = w.type === 'cold';
           labelsToDraw.push({
@@ -1990,6 +2072,7 @@ window.WORLD_VECTOR_MAP = (function () {
 
     // 3. Screen-Space Features (Protected areas, peaks, passes, glaciers)
     compiledProtectedAreas.forEach(p => {
+        if (!inScope(p)) return;
       if (!isCategoryActive(p.category)) return;
       const [sx, sy] = toScr(p.cx, p.cy);
       if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
@@ -2023,6 +2106,7 @@ window.WORLD_VECTOR_MAP = (function () {
     // Peaks: 3D Faceted Triangular Mountains
     if (isCategoryActive('peak')) {
       compiledPeaks.forEach(pk => {
+        if (!inScope(pk)) return;
         const [sx, sy] = toScr(pk.cx, pk.cy);
         if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
         const isSel = pk.id === selectedId;
@@ -2045,6 +2129,7 @@ window.WORLD_VECTOR_MAP = (function () {
     // Passes: Mountain Pass Saddle
     if (isCategoryActive('pass')) {
       compiledPasses.forEach(ps => {
+        if (!inScope(ps)) return;
         const [sx, sy] = toScr(ps.cx, ps.cy);
         if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
         const isSel = ps.id === selectedId;
@@ -2067,6 +2152,7 @@ window.WORLD_VECTOR_MAP = (function () {
     // Glaciers: Crystalline Ice Diamonds
     if (isCategoryActive('glacier')) {
       compiledGlaciers.forEach(gl => {
+        if (!inScope(gl)) return;
         const [sx, sy] = toScr(gl.cx, gl.cy);
         if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
         const isSel = gl.id === selectedId;
@@ -2088,6 +2174,7 @@ window.WORLD_VECTOR_MAP = (function () {
 
     // World Entities (Countries, Lakes, Deserts, Grasslands, Straits)
     compiledWorldEntities.forEach(we => {
+      if (!inScope(we)) return;
       if (!isCategoryActive(we.category)) return;
       const isSel = we.id === selectedId;
 
@@ -2160,6 +2247,7 @@ window.WORLD_VECTOR_MAP = (function () {
     // Mountain Ranges Labels
     if (isCategoryActive('mountain')) {
       compiledMountains.forEach(m => {
+        if (!inScope(m)) return;
         if (showLabels && (V.s > 1.0 || m.id === selectedId)) {
           labelsToDraw.push({
             id: m.id,
@@ -2173,23 +2261,7 @@ window.WORLD_VECTOR_MAP = (function () {
       });
     }
 
-    // Indian States Labels
-    if (isCategoryActive('states') && compiledStates.length > 0) {
-      const stateCol = currentTheme === 'dark' ? '#94a3b8' : '#475569';
-      compiledStates.forEach(st => {
-        if (showLabels && (V.s > 0.95 || st.id === selectedId)) {
-          labelsToDraw.push({
-            id: st.id,
-            text: st.name.toUpperCase(),
-            wx: st.cx,
-            wy: st.cy,
-            col: st.id === selectedId ? col.selPulse : stateCol,
-            priority: st.id === selectedId ? 100 : 38,
-            isState: true
-          });
-        }
-      });
-    }
+    // State/UT names live in notes; political divisions remain visible on the basemap.
 
     // 4. Render Labels with Text Halo & Anti-Cheat Suppression in Quiz/Recall
     if (showLabels) {
@@ -2267,6 +2339,7 @@ window.WORLD_VECTOR_MAP = (function () {
       c.setLineDash([7 / V.s, 15 / V.s]);
       c.lineDashOffset = -(time * 0.0048) / V.s;
       compiledRivers.forEach(r => {
+        if (!inScope(r) || !r.flowVerified) return;
         c.stroke(r.path);
       });
       c.setLineDash([]);
@@ -2439,6 +2512,7 @@ window.WORLD_VECTOR_MAP = (function () {
       c.lineJoin = 'round';
 
       for (const wind of compiledWinds) {
+          if (!inScope(wind)) continue;
         const isCold = wind.type === 'cold';
         const isSel = wind.id === selectedId;
 
@@ -2489,6 +2563,7 @@ window.WORLD_VECTOR_MAP = (function () {
   }
 
   function flyTo(lng, lat, targetScale = 2.0, duration = 400) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) duration = 0;
     const [wx, wy] = project(lng, lat);
     const startTx = V.tx;
     const startTy = V.ty;
@@ -2529,8 +2604,19 @@ window.WORLD_VECTOR_MAP = (function () {
     console.info('Mapping Atlas: Custom base map options ingested:', options);
   }
 
+  document.addEventListener('visibilitychange', () => { animationLast = null; if (!document.hidden) requestRender(true,true); });
+
   return {
     init,
+    setTerrain: () => { terrainMode = 'cartographic'; requestRender(true,true); },
+    getTerrain: () => terrainMode,
+    setAnimation: playing => { animationPlaying = !!playing; animationLast = null; requestRender(false,true); },
+    setAnimationSpeed: speed => { animationSpeed = Math.max(.25,Math.min(3,Number(speed)||1)); },
+    replayAnimation: () => { animationTime = 0; animationLast = null; requestRender(false,true); },
+    getAnimation: () => ({ playing:animationPlaying, speed:animationSpeed, time:animationTime }),
+    setEntityScope: ids => { entityScope = ids ? new Set(ids.flatMap(id => [id, normKey(id)])) : null; requestRender(true,true); },
+    focusIndia: () => flyTo(81.5,22,Math.max(.8,Math.min(W/240,H/220)),900),
+    getView: () => ({...V}),
     render: () => requestRender(true, true),
     resizeAndRender: () => {
       resize();

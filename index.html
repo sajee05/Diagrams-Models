@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="Mapping Atlas — Interactive UPSC CSE Geography Learning Tool with 2D Cartographic Map, Ocean Currents, Quiz, and Recall Modes">
-<title>Mapping Atlas — UPSC CSE Geography</title>
+<title>Interactive Atlas — Explore, Understand, Recall</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap">
 <!-- Stylesheet -->
 <link rel="stylesheet" href="world-map/assets/css/app.css?v=5">
+<link rel="stylesheet" href="world-map/assets/css/se7en.css?v=3">
 </head>
 <body>
 <div id="app">
@@ -20,11 +21,11 @@
         <span class="logo-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
         </span>
-        <span class="logo-text">Mapping Atlas</span>
-        <span class="logo-sub">UPSC CSE</span>
+        <span class="logo-text">Atlas</span>
+        <span class="logo-sub">ATLAS</span>
       </div>
     </div>
-    <div class="header-right">
+    <div class="header-right"><span class="se7en-header-note">Explore The World. Understand The Connections.</span>
       <button class="icon-btn" id="themeToggle" title="Switch to Dark Mode" aria-label="Toggle theme">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
@@ -38,7 +39,7 @@
 
   <div class="app-body">
     <!-- Side Panel -->
-    <aside class="side-panel" id="sidePanel">
+    <aside class="side-panel" id="sidePanel"><section class="se7en-library" aria-label="Subject and thematic map library"><div class="eyebrow">A World Of Connections</div><label for="se7enSubject">Subject</label><select id="se7enSubject"><option value="all">All Subjects</option></select><label for="se7enTheme">Thematic Map</label><select id="se7enTheme"><option value="all">World Overview</option></select><p class="theme-description" id="themeDescription">Choose a subject and map to explore its places, relationships and notes.</p><div id="ramsarNotesAccess" class="ramsar-notes-access" hidden><a href="world-map/notes/India_103_Ramsar_Sites_Notes.md" download>Download All 103 Ramsar Notes (.md)</a></div></section>
       <!-- Kinds Multi-Select Grouped Dropdown placed ABOVE Browse, Practice, Game -->
       <div class="sidebar-kinds-header-bar">
         <div class="sidebar-dropdown-wrapper" id="layerDropdownWrapper">
@@ -357,7 +358,7 @@
             </div>
 
             <select id="quizStyle" aria-label="Quiz style">
-              <option value="mcq">Multiple Choice</option>
+              <option value="evidence">Notes-Based Questions</option><option value="mcq">Multiple Choice</option>
               <option value="map">Map Identification</option>
               <option value="mixed">Mixed</option>
             </select>
@@ -453,10 +454,10 @@
         <div class="recall-card" id="recallCard"></div>
         <div class="recall-progress" id="recallProgress"></div>
       </div>
-    </aside>
+    <div class="se7en-attribution">Built on <a href="https://github.com/sajee05/Diagrams-Models" target="_blank" rel="noopener">sajee05 / Diagrams-Models</a>. <a href="CREDITS.md" target="_blank" rel="noopener">Sources &amp; credits</a>.</div></aside>
 
     <!-- Map Stage (Right) -->
-    <div class="map-stage" id="mapStage">
+    <div class="map-stage" id="mapStage"><div class="se7en-map-heading"><div class="overline" id="se7enMapSubject">Interactive Atlas</div><h1 id="se7enMapTitle">The World, In Perspective.</h1><p id="se7enMapSubtitle">Explore Places And Their Connections.</p></div><div class="se7en-map-controls" aria-label="Terrain and animation controls"><span class="clean-map-label">Clean Map</span><button id="se7enPlay" aria-pressed="true">Ⅱ Pause</button><button id="se7enReplay" aria-label="Replay movement">↺</button><select id="se7enSpeed" aria-label="Animation speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></div><div class="se7en-map-credit">Borders: BharatMaps/NIC · Schematic Flow · Warm / Cold Colours Show Relative Temperature</div>
       <!-- High-Performance Interactive SVG Vector Map Stage (Zero Leaflet) -->
       <div class="mp-stage" id="vectorMapStage" tabindex="0" role="region" aria-label="Interactive Vector Map"></div>
 
@@ -551,9 +552,9 @@
           <path d="M2 12h20"></path>
         </svg>
       </div>
-      <div class="loading-text">Loading Mapping Atlas…</div>
+      <div class="loading-text">Preparing Interactive Atlas…</div>
       <div class="loading-bar"><div class="loading-fill" id="loadingFill"></div></div>
-      <div class="loading-status" id="loadingStatus">Initialising 2D cartography…</div>
+      <div class="loading-status" id="loadingStatus">Preparing terrain, maps and notes…</div>
     </div>
   </div>
 </div>
@@ -564,14 +565,18 @@
 <script src="world-map/data/boundaries-data.js?v=7"></script>
 <script src="world-map/data/ocean-currents.js?v=7"></script>
 <script src="world-map/data/local-winds.js?v=7"></script>
-<script src="world-map/assets/js/data-integrity.js?v=7"></script>
-<script src="world-map/assets/js/vector-map.js?v=7"></script>
+<script src="world-map/data/se7en-content.js?v=1"></script>
+<script src="world-map/data/ramsar-notes.js?v=1"></script>
+<script src="world-map/assets/js/data-integrity.js?v=8"></script>
+<script src="world-map/assets/js/vector-map.js?v=17"></script>
 <script src="world-map/assets/js/entity-panel.js?v=7"></script>
 <script src="world-map/assets/js/search.js?v=7"></script>
 <script src="world-map/assets/js/quiz-engine.js?v=7"></script>
 <script src="world-map/assets/js/recall-mode.js?v=7"></script>
 <script src="world-map/assets/js/progress.js?v=7"></script>
 <script src="world-map/assets/js/navigation.js?v=7"></script>
-<script src="world-map/assets/js/app.js?v=7"></script>
+<script src="world-map/data/place-photos.js?v=2"></script>
+<script src="world-map/assets/js/se7en.js?v=3"></script>
+<script src="world-map/assets/js/app.js?v=8"></script>
 </body>
 </html>
